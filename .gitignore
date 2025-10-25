@@ -1,0 +1,81 @@
+
+# Dependencies
+
+node_modules/
+
+venv/
+
+env/
+
+ENV/
+
+.venv
+ 
+# Build outputs
+
+build/
+
+dist/
+
+*.egg-info/
+ 
+# Environment files
+
+.env.local
+
+.env.development.local
+
+.env.test.local
+
+.env.production.local
+ 
+# Logs
+
+npm-debug.log*
+
+yarn-debug.log*
+
+yarn-error.log*
+
+*.log
+ 
+# OS files
+
+.DS_Store
+
+Thumbs.db
+ 
+# IDE
+
+.vscode/
+
+.idea/
+
+*.swp
+
+*.swo
+ 
+# Python
+
+__pycache__/
+
+*.py[cod]
+
+*$py.class
+
+.pytest_cache/
+ 
+# Application data
+
+backend/uploads/*
+
+!backend/uploads/.gitkeep
+
+backend/vector_db/*
+backend/virtu/
+backend/virtu/*
+!backend/vector_db/.gitkeep
+
+test.md
+package-lock.json
+another.js
