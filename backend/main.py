@@ -11,7 +11,6 @@ import httpx
 import os
 from pathlib import Path
 import chromadb
-from chromadb.config import Settings
 import hashlib
 import json
 import uuid

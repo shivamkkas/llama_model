@@ -314,7 +314,7 @@ export default function OllamaRAGUI() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".txt,.md"
+                accept="*/*" 
                 onChange={(e) => e.target.files?.[0] && uploadDocument(e.target.files[0])}
                 className="hidden"
               />
