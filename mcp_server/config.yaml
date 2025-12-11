@@ -1,0 +1,56 @@
+ollama:
+  host: "http://ollama:11434"
+  model: "llama3"
+  temperature: 0.7
+  timeout: 300
+  max_tokens: 8096
+
+databases:
+  postgresql:
+    type: "postgresql"
+    connection_string: "postgresql://postgres:shivam%40123@192.168.1.11:5432/postgres"
+    pool_size: 10
+    max_overflow: 20
+    table_permissions:
+      customer:
+        - "user_1"
+        - "admin"
+      alarm:
+        - "user_1"
+        - "admin"
+      device:
+        - "user_1"
+        - "admin"
+
+chroma:
+  host: "localhost"
+  port: 8000
+  collection_name: "mcp_conversations"
+  persist_directory: "./chroma_data"
+  distance_metric: "cosine"
+
+documents:
+  storage_path: "./documents"
+  chroma_collection: "documents"
+  chunk_size: 1000
+  chunk_overlap: 200
+  supported_formats:
+    - "txt"
+    - "pdf"
+    - "docx"
+    - "md"
+    - "json"
+    - "csv"
+
+apis:
+  registry_path: "./api_registry.json"
+  timeout: 30
+  max_retries: 3
+  cache_ttl: 3600
+
+api_key: "your-secret-api-key"
+allowed_origins:
+  - "*"
+
+log_level: "INFO"
+log_file: "./mcp_server.log"

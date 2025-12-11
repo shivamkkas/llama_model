@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Upload, FileText, Trash2, MessageSquare, Plus, Settings, Database, Search, X, Menu, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Upload, FileText, Trash2, MessageSquare, Plus, Database, X, Menu, Loader2, Check, AlertCircle, Sparkles, Server, Activity, Settings, Search, Download, ExternalLink } from 'lucide-react';
 
-const API_BASE = 'http://192.168.1.17:8000';
+const API_BASE = 'http://192.168.1.17:8010';
 
-export default function OllamaRAGUI() {
+export default function MCPOllamaUI() {
   const [conversations, setConversations] = useState([]);
   const [currentConversation, setCurrentConversation] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -11,41 +11,56 @@ export default function OllamaRAGUI() {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState('chat');
-  const [model, setModel] = useState('llama3');
-  const [models, setModels] = useState([]);
-  const [useRAG, setUseRAG] = useState(false);
-  const [stats, setStats] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [uploadProgress, setUploadProgress] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState({ show: false, message: '', type: 'info' });
+  const [healthStatus, setHealthStatus] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState([]);
+  const [userId] = useState('user-' + Math.random().toString(36).substr(2, 9));
+  const [model, setModel] = useState('llama3');
+  const [models, setModels] = useState(['llama3', 'llama2', 'mistral', 'codellama']);
+  const [useRAG, setUseRAG] = useState(false);
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    loadConversations();
-    loadDocuments();
-    loadStats();
-    checkHealth();
-  }, []);
+  const inputRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    const initializeApp = async () => {
+      await Promise.all([
+        checkHealth(),
+        loadConversations(),
+        loadDocuments()
+      ]);
+    };
+    initializeApp();
+  }, []);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, [currentConversation]);
+
   const checkHealth = async () => {
     try {
       const res = await fetch(`${API_BASE}/health`);
       const data = await res.json();
-      setModels(data.models || []);
+      setHealthStatus(data);
     } catch (error) {
       console.error('Health check failed:', error);
+      showToast('Unable to connect to server', 'error');
     }
   };
 
   const loadConversations = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/conversations`);
+      const res = await fetch(`${API_BASE}/conversations/list?user_id=${userId}`);
       const data = await res.json();
-      setConversations(data.conversations || []);
+      if (data.status === 'success') {
+        setConversations(data.conversations || []);
+      }
     } catch (error) {
       console.error('Failed to load conversations:', error);
     }
@@ -53,49 +68,33 @@ export default function OllamaRAGUI() {
 
   const loadDocuments = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/documents`);
+      const res = await fetch(`${API_BASE}/documents/list?user_id=${userId}`);
       const data = await res.json();
-      setDocuments(data.documents || []);
+      if (data.status === 'success') {
+        setDocuments(data.documents || []);
+      }
     } catch (error) {
       console.error('Failed to load documents:', error);
     }
   };
 
-  const loadStats = async () => {
+  const loadConversation = useCallback(async (convId) => {
     try {
-      const res = await fetch(`${API_BASE}/api/stats`);
+      const res = await fetch(`${API_BASE}/conversations/${convId}`);
       const data = await res.json();
-      setStats(data);
-    } catch (error) {
-      console.error('Failed to load stats:', error);
-    }
-  };
-
-  const loadConversation = async (convId) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations/${convId}`);
-      const data = await res.json();
-      setCurrentConversation(data);
-      setMessages(data.messages || []);
+      if (data.status === 'success') {
+        setCurrentConversation({ id: convId, ...data.history });
+        setMessages(data.history.messages || []);
+      }
     } catch (error) {
       console.error('Failed to load conversation:', error);
     }
-  };
+  }, []);
 
-  const createNewConversation = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/conversations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'New Chat', model })
-      });
-      const data = await res.json();
-      setCurrentConversation(data);
-      setMessages([]);
-      loadConversations();
-    } catch (error) {
-      console.error('Failed to create conversation:', error);
-    }
+  const createNewConversation = () => {
+    setCurrentConversation(null);
+    setMessages([]);
+    setInput('');
   };
 
   const sendMessage = async () => {
@@ -107,104 +106,132 @@ export default function OllamaRAGUI() {
     setLoading(true);
 
     try {
-      let conversationId = currentConversation?.id;
+      const res = await fetch(`${API_BASE}/query`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: input,
+          conversation_id: currentConversation?.id,
+          user_id: userId,
+          context: {}
+        })
+      });
 
-      if (useRAG) {
-        const res = await fetch(`${API_BASE}/api/rag/query`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            query: input,
-            model,
-            conversation_id: conversationId
-          })
-        });
-        const data = await res.json();
-        
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: data.response,
-          sources: data.num_sources
-        }]);
-        
-        if (data.conversation_id) {
-          conversationId = data.conversation_id;
-        }
-      } else {
-        const res = await fetch(`${API_BASE}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [...messages, userMessage],
-            model,
-            conversation_id: conversationId
-          })
-        });
-        const data = await res.json();
-        
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: data.message.content
-        }]);
-        
-        conversationId = data.conversation_id;
-      }
-
-      if (conversationId && !currentConversation) {
-        loadConversation(conversationId);
-      }
+      const data = await res.json();
       
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: data.response,
+        sources: data.sources_used || [],
+        metadata: data.metadata || {}
+      }]);
+
+      if (data.conversation_id && !currentConversation) {
+        setCurrentConversation({ id: data.conversation_id });
+      }
+
       loadConversations();
     } catch (error) {
       console.error('Failed to send message:', error);
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: 'Error: Failed to get response from server.'
+        content: 'Error: Failed to get response from server.',
+        error: true
       }]);
+      showToast('Failed to send message', 'error');
     } finally {
       setLoading(false);
     }
   };
 
+  const showToast = (message, type = 'info') => {
+    setUploadStatus({ show: true, message, type });
+    setTimeout(() => setUploadStatus({ show: false, message: '', type: 'info' }), 3000);
+  };
+
   const uploadDocument = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('user_id', userId);
+    formData.append('filename', file.name);
     
-    setUploadProgress('Uploading...');
+    showToast('Uploading document...', 'info');
     
     try {
-      const res = await fetch(`${API_BASE}/api/upload`, {
-        method: 'POST',
-        body: formData
-      });
-      
-      if (res.ok) {
-        setUploadProgress('Upload successful!');
-        loadDocuments();
-        loadStats();
-        setTimeout(() => setUploadProgress(null), 2000);
-      } else {
-        const error = await res.json();
-        setUploadProgress(`Error: ${error.detail}`);
-        setTimeout(() => setUploadProgress(null), 3000);
-      }
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const content = e.target.result;
+        
+        const res = await fetch(`${API_BASE}/documents/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file_content: content,
+            filename: file.name,
+            user_id: userId,
+            metadata: {
+              size: file.size,
+              type: file.type,
+              uploaded_at: new Date().toISOString()
+            }
+          })
+        });
+        
+        const data = await res.json();
+        if (data.status === 'success') {
+          showToast('Document uploaded successfully!', 'success');
+          loadDocuments();
+        } else {
+          showToast(`Error: ${data.detail || 'Upload failed'}`, 'error');
+        }
+      };
+      reader.readAsText(file);
     } catch (error) {
-      setUploadProgress('Upload failed');
-      setTimeout(() => setUploadProgress(null), 3000);
+      console.error('Upload failed:', error);
+      showToast('Upload failed', 'error');
     }
   };
 
-  const deleteDocument = async (fileHash) => {
-    if (!confirm('Are you sure you want to delete this document?')) return;
+  const searchDocuments = async () => {
+    if (!searchQuery.trim()) return;
     
     try {
-      await fetch(`${API_BASE}/api/documents/${fileHash}`, {
+      const res = await fetch(`${API_BASE}/documents/search`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: searchQuery,
+          user_id: userId,
+          top_k: 5
+        })
+      });
+      
+      const data = await res.json();
+      if (data.status === 'success') {
+        setSearchResults(data.results || []);
+        showToast(`Found ${data.results?.length || 0} results`, 'success');
+      }
+    } catch (error) {
+      console.error('Search failed:', error);
+      showToast('Search failed', 'error');
+    }
+  };
+
+  const deleteDocument = async (docId) => {
+    if (!confirm('Delete this document? This cannot be undone.')) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/documents/${docId}`, {
         method: 'DELETE'
       });
-      loadDocuments();
-      loadStats();
+      
+      if (res.ok) {
+        showToast('Document deleted', 'success');
+        loadDocuments();
+      }
     } catch (error) {
       console.error('Failed to delete document:', error);
+      showToast('Failed to delete document', 'error');
     }
   };
 
@@ -212,265 +239,349 @@ export default function OllamaRAGUI() {
     if (!confirm('Delete this conversation?')) return;
     
     try {
-      await fetch(`${API_BASE}/api/conversations/${convId}`, {
+      const res = await fetch(`${API_BASE}/conversations/${convId}`, {
         method: 'DELETE'
       });
       
-      if (currentConversation?.id === convId) {
-        setCurrentConversation(null);
-        setMessages([]);
+      if (res.ok) {
+        if (currentConversation?.id === convId) {
+          setCurrentConversation(null);
+          setMessages([]);
+        }
+        showToast('Conversation deleted', 'success');
+        loadConversations();
       }
-      
-      loadConversations();
     } catch (error) {
       console.error('Failed to delete conversation:', error);
+      showToast('Failed to delete conversation', 'error');
     }
   };
 
+  const handleKeyPress = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  };
+
+  const HealthIndicator = ({ status }) => {
+    if (!status) return null;
+    
+    return (
+      <div className="grid grid-cols-3 gap-2 p-3 bg-gray-700/30 rounded-xl">
+        <div className="text-center">
+          <div className={`w-2 h-2 rounded-full mx-auto mb-1 ${status.ollama_connected ? 'bg-green-400' : 'bg-red-400'}`} />
+          <div className="text-xs text-gray-400">Ollama</div>
+        </div>
+        <div className="text-center">
+          <div className={`w-2 h-2 rounded-full mx-auto mb-1 ${status.databases_connected ? 'bg-green-400' : 'bg-red-400'}`} />
+          <div className="text-xs text-gray-400">Database</div>
+        </div>
+        <div className="text-center">
+          <div className={`w-2 h-2 rounded-full mx-auto mb-1 ${status.chroma_connected ? 'bg-green-400' : 'bg-red-400'}`} />
+          <div className="text-xs text-gray-400">Vector DB</div>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="flex h-screen bg-gray-900 text-gray-100">
-      {/* Sidebar */}
-      <div className={`${sidebarOpen ? 'w-64' : 'w-0'} transition-all duration-300 bg-gray-800 border-r border-gray-700 flex flex-col overflow-hidden`}>
-        <div className="p-4 border-b border-gray-700 flex items-center justify-between">
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            <Database className="w-5 h-5" />
-            Ollama RAG
-          </h1>
-          <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
-            <X className="w-5 h-5" />
-          </button>
+    <div className="flex h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-800 text-gray-100">
+      {uploadStatus.show && (
+        <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-top">
+          <div className={`px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 ${
+            uploadStatus.type === 'success' ? 'bg-green-600' :
+            uploadStatus.type === 'error' ? 'bg-red-600' :
+            'bg-blue-600'
+          }`}>
+            {uploadStatus.type === 'success' && <Check className="w-5 h-5" />}
+            {uploadStatus.type === 'error' && <AlertCircle className="w-5 h-5" />}
+            {uploadStatus.type === 'info' && <Loader2 className="w-5 h-5 animate-spin" />}
+            <span className="font-medium">{uploadStatus.message}</span>
+          </div>
+        </div>
+      )}
+
+      <div className={`${sidebarOpen ? 'w-80' : 'w-0'} transition-all duration-300 bg-gray-800/50 backdrop-blur-xl border-r border-gray-700/50 flex flex-col overflow-hidden`}>
+        <div className="p-6 border-b border-gray-700/50">
+          <div className="flex items-center justify-between mb-4">
+            <h1 className="text-2xl font-bold flex items-center gap-3">
+              <div className="bg-gradient-to-br from-blue-500 to-purple-600 p-2 rounded-xl">
+                <Database className="w-6 h-6" />
+              </div>
+              <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                MCP Ollama
+              </span>
+            </h1>
+            <button onClick={() => setSidebarOpen(false)} className="lg:hidden hover:bg-gray-700 p-2 rounded-lg transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          
+          <HealthIndicator status={healthStatus} />
         </div>
 
-        {/* View Tabs */}
-        <div className="flex border-b border-gray-700">
-          <button
-            onClick={() => setView('chat')}
-            className={`flex-1 px-4 py-2 text-sm font-medium ${view === 'chat' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}
-          >
-            <MessageSquare className="w-4 h-4 inline mr-2" />
-            Chats
-          </button>
-          <button
-            onClick={() => setView('documents')}
-            className={`flex-1 px-4 py-2 text-sm font-medium ${view === 'documents' ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}`}
-          >
-            <FileText className="w-4 h-4 inline mr-2" />
-            Docs
-          </button>
+        <div className="flex p-2 gap-2">
+          {['chat', 'documents', 'search'].map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`flex-1 px-3 py-2 text-xs font-medium rounded-xl transition-all ${
+                view === v
+                  ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-lg'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+              }`}
+            >
+              {v === 'chat' && <MessageSquare className="w-3 h-3 inline mr-1" />}
+              {v === 'documents' && <FileText className="w-3 h-3 inline mr-1" />}
+              {v === 'search' && <Search className="w-3 h-3 inline mr-1" />}
+              {v.charAt(0).toUpperCase() + v.slice(1)}
+            </button>
+          ))}
         </div>
 
-        {/* Chat View */}
         {view === 'chat' && (
           <div className="flex-1 overflow-y-auto">
-            <div className="p-3">
+            <div className="p-4">
               <button
                 onClick={createNewConversation}
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg"
               >
-                <Plus className="w-4 h-4" />
+                <Plus className="w-5 h-5" />
                 New Chat
               </button>
             </div>
 
-            <div className="px-3 space-y-1">
-              {conversations.map(conv => (
-                <button
-                  key={conv.id}
-                  onClick={() => loadConversation(conv.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg hover:bg-gray-700 transition-colors group ${currentConversation?.id === conv.id ? 'bg-gray-700' : ''}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="truncate text-sm">{conv.title}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteConversation(conv.id);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 hover:text-red-400"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    {conv.message_count} messages
-                  </div>
-                </button>
-              ))}
+            <div className="px-4 space-y-2">
+              {conversations.length === 0 ? (
+                <div className="text-center text-gray-500 py-8 text-sm">
+                  No conversations yet
+                </div>
+              ) : (
+                conversations.map(conv => (
+                  <button
+                    key={conv.id}
+                    onClick={() => loadConversation(conv.id)}
+                    className={`w-full text-left px-4 py-3 rounded-xl transition-all group ${
+                      currentConversation?.id === conv.id
+                        ? 'bg-gray-700/50 shadow-lg'
+                        : 'hover:bg-gray-700/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="truncate font-medium">{conv.title || 'Conversation'}</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteConversation(conv.id);
+                        }}
+                        className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all p-1"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           </div>
         )}
 
-        {/* Documents View */}
         {view === 'documents' && (
           <div className="flex-1 overflow-y-auto">
-            <div className="p-3">
+            <div className="p-4">
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                className="w-full bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white px-4 py-3 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg"
               >
-                <Upload className="w-4 h-4" />
+                <Upload className="w-5 h-5" />
                 Upload Document
               </button>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="*/*" 
+                accept="*/*"
                 onChange={(e) => e.target.files?.[0] && uploadDocument(e.target.files[0])}
                 className="hidden"
               />
-              {uploadProgress && (
-                <div className="mt-2 text-xs text-center text-gray-400">
-                  {uploadProgress}
+            </div>
+
+            <div className="px-4 space-y-3">
+              {documents.length === 0 ? (
+                <div className="text-center text-gray-500 py-8 text-sm">
+                  No documents uploaded
+                </div>
+              ) : (
+                documents.map(doc => (
+                  <div
+                    key={doc.id}
+                    className="bg-gray-700/30 hover:bg-gray-700/50 p-4 rounded-xl transition-all border border-gray-700/50 group"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2">
+                          <FileText className="w-4 h-4 text-green-400 flex-shrink-0" />
+                          <div className="font-medium truncate text-sm">{doc.filename}</div>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(doc.uploaded_at).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => deleteDocument(doc.id)}
+                        className="ml-2 text-gray-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all p-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === 'search' && (
+          <div className="flex-1 overflow-y-auto p-4">
+            <div className="space-y-4">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && searchDocuments()}
+                  placeholder="Search documents..."
+                  className="flex-1 bg-gray-700/50 border border-gray-600/50 rounded-xl px-4 py-2 text-sm"
+                />
+                <button
+                  onClick={searchDocuments}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl transition-all"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div className="space-y-2">
+                  {searchResults.map((result, idx) => (
+                    <div key={idx} className="bg-gray-700/30 p-3 rounded-xl border border-gray-700/50">
+                      <div className="text-sm font-medium mb-1">{result.filename}</div>
+                      <div className="text-xs text-gray-400">{result.content}</div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
-
-            <div className="px-3 space-y-2">
-              {documents.map(doc => (
-                <div
-                  key={doc.file_hash}
-                  className="bg-gray-700 p-3 rounded-lg"
-                >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{doc.filename}</div>
-                      <div className="text-xs text-gray-400 mt-1">
-                        {doc.chunks} chunks • {(doc.file_size / 1024).toFixed(1)}KB
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => deleteDocument(doc.file_hash)}
-                      className="ml-2 text-gray-400 hover:text-red-400"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         )}
 
-        {/* Stats Footer */}
-        {stats && (
-          <div className="p-4 border-t border-gray-700 text-xs text-gray-400">
-            <div className="space-y-1">
-              <div>Conversations: {stats.total_conversations}</div>
-              <div>Documents: {stats.unique_documents}</div>
-              <div>Messages: {stats.total_messages}</div>
-            </div>
+        <div className="p-4 border-t border-gray-700/50 bg-gray-800/30">
+          <div className="text-xs text-center text-gray-500">
+            User: {userId.slice(0, 8)}...
           </div>
-        )}
+        </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-gray-800 border-b border-gray-700 p-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      <div className="flex-1 flex flex-col min-w-0">
+        <div className="bg-gray-800/50 backdrop-blur-xl border-b border-gray-700/50 p-4 flex items-center justify-between">
+          <div className="flex items-center gap-4 min-w-0">
             {!sidebarOpen && (
-              <button onClick={() => setSidebarOpen(true)}>
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="hover:bg-gray-700 p-2 rounded-lg transition-colors"
+              >
                 <Menu className="w-5 h-5" />
               </button>
             )}
-            <h2 className="font-semibold">
-              {currentConversation?.title || 'Select or create a conversation'}
+            <h2 className="font-semibold truncate">
+              {currentConversation?.id ? `Conversation ${currentConversation.id.slice(0, 8)}...` : 'New Conversation'}
             </h2>
           </div>
 
-          <div className="flex items-center gap-4">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={useRAG}
-                onChange={(e) => setUseRAG(e.target.checked)}
-                className="rounded"
-              />
-              <span>RAG Mode</span>
-            </label>
-
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 text-sm"
-            >
-              {models.map(m => (
-                <option key={m.name} value={m.name}>{m.name}</option>
-              ))}
-              <option value="llama3">llama3</option>
-            </select>
-          </div>
+          <button
+            onClick={checkHealth}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-700/50 hover:bg-gray-700 rounded-lg transition-all text-sm"
+          >
+            <Activity className="w-4 h-4" />
+            Status
+          </button>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6">
           {messages.length === 0 ? (
-            <div className="text-center text-gray-500 mt-20">
-              <MessageSquare className="w-16 h-16 mx-auto mb-4 opacity-50" />
-              <p className="text-lg">No messages yet</p>
-              <p className="text-sm mt-2">Start a conversation or ask a question</p>
-              {useRAG && documents.length === 0 && (
-                <p className="text-sm mt-4 text-yellow-500">
-                  Upload documents to use RAG mode
-                </p>
-              )}
+            <div className="flex flex-col items-center justify-center h-full text-gray-500 px-4">
+              <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 p-8 rounded-3xl mb-6">
+                <Sparkles className="w-20 h-20 text-blue-400" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-2xl font-semibold text-gray-300 mb-2">Start a Conversation</h3>
+              <p className="text-gray-500 text-center max-w-md">
+                Ask anything or upload documents for RAG-powered responses
+              </p>
             </div>
           ) : (
-            messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+            <div className="max-w-4xl mx-auto space-y-6">
+              {messages.map((msg, idx) => (
                 <div
-                  className={`max-w-3xl px-4 py-3 rounded-lg ${
-                    msg.role === 'user'
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-gray-700 text-gray-100'
-                  }`}
+                  key={idx}
+                  className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
-                  {msg.sources > 0 && (
-                    <div className="text-xs mt-2 opacity-75">
-                      📚 {msg.sources} sources used
+                  <div
+                    className={`max-w-3xl px-6 py-4 rounded-2xl shadow-lg ${
+                      msg.role === 'user'
+                        ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white'
+                        : msg.error
+                        ? 'bg-red-600/20 text-red-300 border border-red-600/30'
+                        : 'bg-gray-700/50 text-gray-100 border border-gray-600/30'
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                    {msg.sources && msg.sources.length > 0 && (
+                      <div className="text-xs mt-3 pt-3 border-t border-white/10 flex items-center gap-2">
+                        <FileText className="w-3 h-3" />
+                        {msg.sources.length} source(s) used
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-gray-700/50 px-6 py-4 rounded-2xl border border-gray-600/30">
+                    <div className="flex gap-2 items-center">
+                      <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                      <span className="text-sm text-gray-400">Thinking...</span>
                     </div>
-                  )}
+                  </div>
                 </div>
-              </div>
-            ))
-          )}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="bg-gray-700 px-4 py-3 rounded-lg">
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
           )}
-          <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <div className="border-t border-gray-700 p-4">
+        <div className="border-t border-gray-700/50 p-6 bg-gray-800/30 backdrop-blur-xl">
           <div className="max-w-4xl mx-auto">
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <input
+                ref={inputRef}
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && sendMessage()}
-                placeholder={useRAG ? "Ask a question about your documents..." : "Type a message..."}
-                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                onKeyPress={handleKeyPress}
+                placeholder="Type a message..."
+                className="flex-1 bg-gray-700/50 border border-gray-600/50 rounded-2xl px-6 py-4 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 disabled={loading}
               />
               <button
                 onClick={sendMessage}
                 disabled={loading || !input.trim()}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-6 py-3 rounded-lg transition-colors"
+                className="bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 disabled:from-gray-600 disabled:to-gray-600 text-white px-8 py-4 rounded-2xl transition-all disabled:cursor-not-allowed shadow-lg"
               >
-                <Send className="w-5 h-5" />
+                {loading ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
               </button>
             </div>
           </div>

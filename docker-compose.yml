@@ -1,19 +1,20 @@
-version: '3.8'
-
 services:
-  # Ollama Service
+  # 🧠 Ollama (LLM Engine)
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
     ports:
-      - "11435:11434"
+      - "11436:11434"
     volumes:
-      - ollama_data:/root/.ollama
+      - /home/bitcommai/ollama_models_backup:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0
-    restart: unless-stopped
+    #restart: unless-stopped
+    runtime: nvidia
+    networks:
+      - mcp-network        
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      test: ["CMD-SHELL", "command -v curl >/dev/null 2>&1 && curl -sf http://localhost:11434/api/tags > /proc/1/fd/1 || echo '❌ Healthcheck failed' >> /proc/1/fd/1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -25,63 +26,103 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Frontend UI Service
+
+  # 🔍 ChromaDB (Vector Database)
+  chromadb:
+    image: chromadb/chroma:0.5.6
+    container_name: chromadb
+    ports:
+      - "8006:8000"
+    volumes:
+      - ./chroma_data:/data
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - mcp-network
+    #restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+      start_period: 60s
+
+  # ⚙️ MCP Server (Main Backend)
+  mcp-server:
+    build:
+      context: ./mcp_server
+      dockerfile: Dockerfile
+    container_name: mcp-server
+    ports:
+      - "8010:9000"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434   # internal Docker network
+      - OLLAMA_MODEL=llama3
+      - POSTGRES_HOST=192.168.1.11
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=shivam%40123
+      - POSTGRES_DB=postgres
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - CHROMA_PERSIST_DIR=/app/chroma_data
+      - DOCUMENT_STORAGE=/app/documents
+      - API_REGISTRY=/app/api_registry.json
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./chroma_data:/module/chroma_data
+      - ./logs:/module/logs
+      - ./mcp_server/config.yaml:/module/config.yaml
+    depends_on:
+      ollama:
+        condition: service_healthy
+      chromadb:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    #restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 💻 Frontend UI
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: ollama-ui
     ports:
-      - "3005:80"
+      - "3006:50"
     environment:
-      - REACT_APP_OLLAMA_URL=http://ollama:11435
+      - REACT_APP_MCP_SERVER_URL=http://localhost:9000
+      - REACT_APP_OLLAMA_URL=http://localhost:11436  # updated to match new mapped port
     depends_on:
-      - ollama
-    restart: unless-stopped
+      mcp-server:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    #restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost"]
       interval: 10s
       timeout: 3s
       retries: 3
+      start_period: 50s
 
-
-  # Backend API Service
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: ollama-backend
-    ports:
-      - "8000:8000"
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/vector_db:/app/vector_db
-    depends_on:
-      - ollama
-    restart: unless-stopped
-
-  # Vector Database for RAG
-  chromadb:
-    image: chromadb/chroma:latest
-    container_name: chromadb
-    ports:
-      - "8001:8000"
-    volumes:
-      - chroma_data:/chroma/chroma
-    environment:
-      - IS_PERSISTENT=TRUE
-      - ANONYMIZED_TELEMETRY=FALSE
-    restart: unless-stopped
-
+# 🧱 Persistent Volumes
 volumes:
   ollama_data:
     driver: local
   chroma_data:
     driver: local
 
+# 🌐 Networks
 networks:
-  default:
-    name: ollama-network
+  mcp-network:
+    driver: bridge
+  nvidia:
+    driver: bridge

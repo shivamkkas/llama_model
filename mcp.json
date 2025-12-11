@@ -1,0 +1,11 @@
+{
+    "servers": {
+        "": {
+            "type": "stdio",
+            "command": "python3",
+            "args": [
+                "/home/bitcommai/ollama_tut/ollama-ui/mcp_ollama_server/mcp_server.py"
+            ]
+        }
+    }
+}

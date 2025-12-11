@@ -1,7 +1,3 @@
-"""
-Backend API for Ollama UI with Advanced RAG capabilities
-FastAPI + ChromaDB (for all storage) - Vector DB for everything
-"""
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -31,6 +27,24 @@ app.add_middleware(
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11435")
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
+# Configuration
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+CHUNK_SIZE = 1000  # characters
+CHUNK_OVERLAP = 200  # characters
+
+SUPPORTED_FILE_TYPES = {
+    'application/pdf': '.pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+    'text/plain': '.txt',
+    'text/csv': '.csv',
+    'application/json': '.json',
+    'application/vnd.ms-excel': '.xls',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+    'text/markdown': '.md',
+    'text/html': '.html',
+    'application/xml': '.xml',
+    'text/xml': '.xml'
+}
 
 # Persistent ChromaDB client
 chroma_client = chromadb.PersistentClient(path="./vector_db")
@@ -91,7 +105,7 @@ async def get_embedding(text: str, model: str = "llama3") -> List[float]:
         )
         return response.json()["embedding"]
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 100) -> List[str]:
+def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> List[str]:
     """Split text into overlapping chunks"""
     chunks = []
     start = 0
